@@ -1,123 +1,332 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const BloodPressureApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+// --- Model ---
+class BloodPressureRecord {
+  final DateTime date;
+  final int systolic;
+  final int diastolic;
+  final int pulse;
 
-  // This widget is the root of your application.
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      initialRoute: '/',
-      routes: {
-        '/': (context) => const MyHomePage(title: 'Flutter Demo Home Page'),
-      },
-    );
+  BloodPressureRecord({
+    required this.date,
+    required this.systolic,
+    required this.diastolic,
+    required this.pulse,
+  });
+}
+
+// --- Localization ---
+class AppStrings {
+  static const Map<String, Map<String, String>> _localizedValues = {
+    'es': {
+      'appTitle': 'Control de Tensión Arterial',
+      'date': 'Fecha',
+      'systolic': 'Sistólica (mmHg)',
+      'diastolic': 'Diastólica (mmHg)',
+      'pulse': 'Pulso (BPM)',
+      'addRecord': 'Agregar Registro',
+      'save': 'Guardar',
+      'cancel': 'Cancelar',
+      'printPdf': 'Imprimir / Compartir PDF',
+      'emptyList': 'No hay registros. Pulse + para agregar.',
+      'language': 'Idioma',
+      'sysShort': 'Sis',
+      'diaShort': 'Dia',
+      'pulShort': 'Pul',
+      'errorInvalid': 'Por favor ingrese números válidos',
+    },
+    'de': {
+      'appTitle': 'Blutdruckkontrolle',
+      'date': 'Datum',
+      'systolic': 'Systolisch (mmHg)',
+      'diastolic': 'Diastolisch (mmHg)',
+      'pulse': 'Puls (BPM)',
+      'addRecord': 'Eintrag hinzufügen',
+      'save': 'Speichern',
+      'cancel': 'Abbrechen',
+      'printPdf': 'Drucken / PDF teilen',
+      'emptyList': 'Keine Einträge. Drücken Sie +, um hinzuzufügen.',
+      'language': 'Sprache',
+      'sysShort': 'Sys',
+      'diaShort': 'Dia',
+      'pulShort': 'Pul',
+      'errorInvalid': 'Bitte geben Sie gültige Zahlen ein',
+    },
+  };
+
+  static String get(String key, String langCode) {
+    return _localizedValues[langCode]?[key] ?? key;
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class BloodPressureApp extends StatefulWidget {
+  const BloodPressureApp({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<BloodPressureApp> createState() => _BloodPressureAppState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _BloodPressureAppState extends State<BloodPressureApp> {
+  String _currentLang = 'es'; // Default to Spanish
+  
+  // Sample data
+  final List<BloodPressureRecord> _records = [];
 
-  void _incrementCounter() {
+  void _toggleLanguage(String? newLang) {
+    if (newLang != null) {
+      setState(() {
+        _currentLang = newLang;
+      });
+    }
+  }
+
+  void _addRecord(BloodPressureRecord record) {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _records.insert(0, record); // Add to top
     });
   }
 
+  void _deleteRecord(int index) {
+    setState(() {
+      _records.removeAt(index);
+    });
+  }
+
+  // --- PDF Generation ---
+  Future<void> _printDoc() async {
+    final doc = pw.Document();
+    final font = await PdfGoogleFonts.nunitoExtraLight();
+    
+    // Headers based on current language
+    final title = AppStrings.get('appTitle', _currentLang);
+    final hDate = AppStrings.get('date', _currentLang);
+    final hSys = AppStrings.get('systolic', _currentLang);
+    final hDia = AppStrings.get('diastolic', _currentLang);
+    final hPul = AppStrings.get('pulse', _currentLang);
+
+    doc.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        build: (pw.Context context) {
+          return pw.Column(
+            children: [
+              pw.Header(
+                level: 0,
+                child: pw.Text(title, style: pw.TextStyle(font: font, fontSize: 24)),
+              ),
+              pw.SizedBox(height: 20),
+              pw.TableHelper.fromTextArray(
+                context: context,
+                border: pw.TableBorder.all(),
+                headerStyle: pw.TextStyle(font: font, fontWeight: pw.FontWeight.bold),
+                cellStyle: pw.TextStyle(font: font),
+                headers: [hDate, hSys, hDia, hPul],
+                data: _records.map((r) => [
+                  DateFormat('yyyy-MM-dd HH:mm').format(r.date),
+                  r.systolic.toString(),
+                  r.diastolic.toString(),
+                  r.pulse.toString(),
+                ]).toList(),
+              ),
+              pw.Footer(
+                leading: pw.Text(DateFormat('yyyy-MM-dd').format(DateTime.now())),
+                trailing: pw.Text('Page ${context.pageNumber}'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => doc.save(),
+      name: 'blood_pressure_report.pdf',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    return MaterialApp(
+      title: 'Blood Pressure App',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.redAccent),
+        useMaterial3: true,
+      ),
+      initialRoute: '/',
+      routes: {
+        '/': (context) => _buildHomePage(context),
+      },
+    );
+  }
+
+  Widget _buildHomePage(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
+        title: Text(AppStrings.get('appTitle', _currentLang)),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        actions: [
+          // Language Switcher
+          DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _currentLang,
+              icon: const Icon(Icons.language),
+              items: const [
+                DropdownMenuItem(value: 'es', child: Text('Español 🇪🇸')),
+                DropdownMenuItem(value: 'de', child: Text('Deutsch 🇩🇪')),
+              ],
+              onChanged: _toggleLanguage,
+            ),
+          ),
+          const SizedBox(width: 10),
+          // Print Button
+          IconButton(
+            icon: const Icon(Icons.print),
+            tooltip: AppStrings.get('printPdf', _currentLang),
+            onPressed: _records.isNotEmpty ? _printDoc : null,
+          ),
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text('$_counter', style: Theme.of(context).textTheme.headlineMedium),
-          ],
-        ),
-      ),
+      body: _records.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.favorite_border, size: 64, color: Colors.grey),
+                  const SizedBox(height: 16),
+                  Text(
+                    AppStrings.get('emptyList', _currentLang),
+                    style: const TextStyle(fontSize: 16, color: Colors.grey),
+                  ),
+                ],
+              ),
+            )
+          : ListView.builder(
+              itemCount: _records.length,
+              itemBuilder: (context, index) {
+                final record = _records[index];
+                return Dismissible(
+                  key: ValueKey(record),
+                  background: Container(color: Colors.red),
+                  onDismissed: (_) => _deleteRecord(index),
+                  child: Card(
+                    margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: _getBpColor(record.systolic, record.diastolic),
+                        child: const Icon(Icons.favorite, color: Colors.white, size: 20),
+                      ),
+                      title: Text(
+                        DateFormat('yyyy-MM-dd HH:mm').format(record.date),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('${AppStrings.get('sysShort', _currentLang)}: ${record.systolic}'),
+                          Text('${AppStrings.get('diaShort', _currentLang)}: ${record.diastolic}'),
+                          Text('${AppStrings.get('pulShort', _currentLang)}: ${record.pulse}'),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
+        onPressed: () => _showAddDialog(context),
         child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+      ),
+    );
+  }
+
+  Color _getBpColor(int sys, int dia) {
+    // Simple color coding logic
+    if (sys > 140 || dia > 90) return Colors.red;
+    if (sys > 120 || dia > 80) return Colors.orange;
+    return Colors.green;
+  }
+
+  void _showAddDialog(BuildContext context) {
+    final sysController = TextEditingController();
+    final diaController = TextEditingController();
+    final pulController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(AppStrings.get('addRecord', _currentLang)),
+        content: Form(
+          key: formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildNumberField(sysController, AppStrings.get('systolic', _currentLang)),
+                _buildNumberField(diaController, AppStrings.get('diastolic', _currentLang)),
+                _buildNumberField(pulController, AppStrings.get('pulse', _currentLang)),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(AppStrings.get('cancel', _currentLang)),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                final sys = int.tryParse(sysController.text);
+                final dia = int.tryParse(diaController.text);
+                final pul = int.tryParse(pulController.text);
+
+                if (sys != null && dia != null && pul != null) {
+                  _addRecord(BloodPressureRecord(
+                    date: DateTime.now(),
+                    systolic: sys,
+                    diastolic: dia,
+                    pulse: pul,
+                  ));
+                  Navigator.pop(ctx);
+                }
+              }
+            },
+            child: Text(AppStrings.get('save', _currentLang)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNumberField(TextEditingController controller, String label) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: TextFormField(
+        controller: controller,
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+        ),
+        keyboardType: TextInputType.number,
+        validator: (value) {
+          if (value == null || value.isEmpty || int.tryParse(value) == null) {
+            return AppStrings.get('errorInvalid', _currentLang);
+          }
+          return null;
+        },
+      ),
     );
   }
 }
